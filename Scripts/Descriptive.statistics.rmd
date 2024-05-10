@@ -1,0 +1,253 @@
+---
+title: "Descriptive Statistics Covid Affect Mobility Project"
+author: "Jordan Alexander"
+date: "11/29/2022"
+output: html_document
+---
+
+
+# Missing Data
+
+## Mobility Data
+
+load packages and set working directory
+
+```{r}
+setwd("C:\\Users\\alexa877\\Documents\\UMN Courses\\Research\\Covid Location project\\RAship 2022\\Datasets")
+library(dplyr)
+library(lubridate)
+library(data.table)
+library(tidyr)
+library(knitr)
+```
+
+First let's restrict to the period of interest, when we were collecting affect data. This started after 02/05/2019.
+```{r}
+# load data
+dat2 = fread('mobility.affect.covid.11.16.22.csv', data.table =  F)
+min(dat2$date[is.na(dat2$pa.av) == F])
+dat.tmp = dat2[dat2$date >= ymd('2019-02-05'),]
+
+```
+
+Report percent of missing days per participant
+
+```{r}
+missdays = dat.tmp %>% group_by(user_id) %>% 
+     summarize(first = min(date, na.rm = T),
+               last = max(date, na.rm = T),
+               n = n())
+
+missdays$maxdays = missdays$last - missdays$first + 1
+
+missdays$pctmissing = 1- missdays$n/as.numeric(missdays$maxdays)
+summary(missdays)
+```
+The average participant is missing 39.2% of days, first quartile missing 17.6%, 3rd missing 57.3%
+
+```{r}
+hist(missdays$pctmissing)
+# right skewed, and kurtotic
+```
+
+Now we'll look at the length of missing intervals
+
+```{r}
+# interval length
+setorder(dat.tmp, user_id, date)
+dat.tmp = dat.tmp[is.na(dat.tmp$user_id) == F,]
+
+# flag first observation for each participant
+dat.tmp$firstobs = NA
+dat.tmp$firstobs[dat.tmp$user_id == lag(dat.tmp$user_id)] = F
+dat.tmp$firstobs[dat.tmp$user_id != lag(dat.tmp$user_id)] = T
+dat.tmp$firstobs[1] = T
+
+
+# calculate interval
+dat.tmp$interval = dat.tmp$date - lag(dat.tmp$date)
+dat.tmp$interval[dat.tmp$firstobs == T] = NA
+```
+
+
+85% of days are consecutive, 99% of observations come within one week of the previous observation
+```{r}
+summary(as.numeric(dat.tmp$interval))
+
+length(dat.tmp$interval[dat.tmp$interval == 1])/length(dat.tmp$interval)
+# 85% of intervals are only 1 day apart
+length(dat.tmp$interval[dat.tmp$interval <= 2])/length(dat.tmp$interval)
+# 94% 2 days apart or less
+length(dat.tmp$interval[dat.tmp$interval <= 7])/length(dat.tmp$interval)
+# 99% a week apart or less
+```
+
+
+The average participant has about 71 intervals of missing data with an average length of 5 days. Most missing days are concentrated in one long interval of about 92 days.
+```{r}
+# average and maximum intervals apart
+tmp = dat.tmp %>% subset(firstobs == F) %>% 
+     group_by(user_id) %>% 
+     summarise(mean.int = mean(interval, na.rm = T),
+               median.int = median(interval, na.rm = T),
+               max.int = max(interval, na.rm = T),
+               int2 = sum(interval >=2))
+               
+
+mean(tmp$mean.int)
+# average participant has a mean interval of 5 days, skewed by outlying participants
+hist(as.numeric(tmp$mean.int))
+
+
+mean(tmp$int2)
+hist((tmp$int2))
+
+
+mean(tmp$max.int)
+#average participant has a max interval of greater than 101 days, right skewed
+hist(as.numeric(tmp$max.int))
+summary(as.numeric(tmp$max.int))
+```
+
+
+## Affect data
+
+now we give missingness descriptives for affect data. First we limit to participants who provided at least one affect survey.
+
+```{r}
+tmp2 = fread('PANASphone.long.csv') %>% mutate(date = as_date(SUBMIT_DATE),
+                                               Year_Week = paste(year(date),
+                                                                 week(date),
+                                                                 sep = '_'))
+
+af.miss = data.frame()
+
+#users = unique(tmp2$user_id)
+#i = users[5]
+
+for (i in unique(tmp2$user_id)){
+     temp = subset(tmp2, user_id == i)
+     temp2 = subset(dat.tmp, user_id == i)
+     if(nrow(temp2) == 0){temp2 = temp}
+     temp = temp[is.na(temp$date) == F,]
+     temp2 = temp2[is.na(temp2$date) == F,]
+     first = min(temp$date,na.rm = T)
+     last = max(temp2$date, na.rm = T)
+     last2 = max(temp$date, na.rm = T)
+     if(last2 > last){last = last2}
+     n.survey = length(unique(temp$Year_Week))
+     max.survey = round(as.numeric(last - first + 1)/14,
+                      digits = 0)
+     pct.miss = 1 - n.survey/max.survey
+     if(max.survey == 0){pct.miss = NA}
+     if(pct.miss < 0){pct.miss = 0}
+     
+     row = data.frame(first = first,
+                      last = last,
+                      n.survey = n.survey,
+                      max.survey = max.survey,
+                      pct.miss = pct.miss)
+     
+     af.miss = rbind(af.miss,row)
+     #print(i)
+     }
+
+af.miss = subset(af.miss, n.survey > 0)
+summary(af.miss$n.survey)
+summary(af.miss$pct.miss)
+hist(af.miss$pct.miss)
+```
+
+The average participant is contributing 25 surveys and missing 60% of their total possible affect surveys. 3rd quartile is missing 75% of them. The distribution is left skewed, most participants are missing many surveys
+
+
+
+
+
+# Descriptive Statistics
+
+
+## Mobility
+
+
+Again limiting to the period of interest after February, 2019:
+
+```{r}
+get.descriptives = function(vec){
+     mean = round(mean(vec,na.rm = T),digits = 2)
+     sd = round(sd(vec, na.rm = T),digits = 2)
+     min = round(min(vec, na.rm = T),digits = 2)
+     max = round(max(vec, na.rm = T),digits = 2)
+     n.obs = length(na.omit(vec))
+     
+     row = data.frame(mean = mean,
+                      sd = sd,
+                      min = min,
+                      max = max,
+                      n.obs = n.obs)
+     return(row)}
+
+
+points = get.descriptives(dat.tmp$numpts)
+distance = get.descriptives(dat.tmp$distance)
+pa.av = get.descriptives(dat.tmp$pa.av)
+na.av = get.descriptives(dat.tmp$na.av)
+weekly.cases = get.descriptives(dat.tmp$cases.weekly)
+weekly.cases.per100k = get.descriptives(dat.tmp$cases.weekly.per.100k)
+
+# build table
+table1 = rbind(points,distance,pa.av,na.av,weekly.cases,weekly.cases.per100k)
+rownames(table1) = c('Daily Locations Visited',
+                     'Daily Distance Travelled (km)',
+                     'Average Positive Affect',
+                     'Average Negative Affect',
+                     'Weekly Covid-19 Cases',
+                     'Weekly Covid-19 Cases (per 100k)')
+names(table1) = c('Mean','SD','Minimum','Maximum','n')
+
+table1$'Missing Cases (average participant)' = c(0.39, 0.39, 0.60, 0.60, 0, 0)
+```
+
+```{r}
+kable(table1)
+
+```
+
+
+
+## ICCs for mobility measures
+
+```{r}
+# pts ICC
+dat.tmp = dat %>% 
+     filter(SVID != '') %>% 
+     select(SVID, date, numpts) %>% 
+     arrange(SVID, date) %>% 
+     select(!c(date)) %>%
+     group_by(SVID) %>%
+     mutate(row = row_number()) %>%
+     spread(key = row, value = numpts) %>%
+     ungroup()%>%select(!c(SVID))
+
+ICC(dat.tmp)
+
+# distance ICC
+
+dat.tmp = dat %>% 
+     filter(SVID != '') %>% 
+     select(SVID, date, distance) %>% 
+     arrange(SVID, date) %>% 
+     select(!c(date)) %>%
+     group_by(SVID) %>%
+     mutate(row = row_number()) %>%
+     spread(key = row, value = distance) %>%
+     ungroup()%>%select(!c(SVID))
+
+ICC(dat.tmp)
+
+
+
+
+
+
+```
